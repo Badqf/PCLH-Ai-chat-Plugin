@@ -1,7 +1,7 @@
 {
   "id": "aichat",
   "name": "AI 助手",
-  "version": "3.0.1",
+  "version": "0.1.0",
   "author": "XYM",
   "description": "在「启动」页右侧卡片里和 AI 对话：流式输出、代码块、用量显示、本地保存历史；可调用工具列实例/切实例/启动游戏/管插件/管模组/读日志。API v7 显式权限。",
   "entry": "AiChatPlugin",
