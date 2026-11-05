@@ -1,0 +1,17 @@
+# 构建产物
+*.dll
+*.pdb
+bin/
+obj/
+*.pclplugin
+
+# 运行时数据（插件运行时生成，含密钥与聊天记录）
+data/
+notes/
+
+# 本地杂项
+.vs/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
