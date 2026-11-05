@@ -4,6 +4,21 @@
 
 ![截图](docs/screenshot.png)
 
+## 安装
+
+**依赖 PCL Harness 3.8.3 及以上（API v7）。**
+
+1. 到 [Releases](https://github.com/Badqf/PCLH-Ai-chat-Plugin/releases/latest) 下载 `aichat-*.pclplugin`。
+2. 启动器 →「插件」页 →「导入插件…」选择该文件（也可以把文件直接拖进窗口）。
+3. 启用时会弹出权限确认，确认后才会加载。
+4. 到「启动」页右侧卡片点「配置」，填接口地址 / 密钥 / 模型名。
+
+| 服务 | 接口地址 | 模型名 |
+| --- | --- | --- |
+| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
+| OpenAI | `https://api.openai.com` | `gpt-4o-mini` 等 |
+| 本地 Ollama | `http://127.0.0.1:11434` | `qwen2.5:7b` 等 |
+
 ## 特性
 
 - **流式对话**：SSE 逐字渲染，`停止` 随时中断。
