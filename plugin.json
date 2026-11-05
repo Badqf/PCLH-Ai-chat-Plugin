@@ -7,5 +7,7 @@
   "entry": "AiChatPlugin",
   "dll": "AiChat.Plugin.dll",
   "minApiVersion": 7,
+  "homepage": "https://github.com/Badqf/PCLH-Ai-chat-Plugin",
+  "license": "MIT",
   "permissions": ["ui", "net", "args", "plugins", "instance.read", "instance.select", "logs.read", "mods.read", "mods.write", "launch", "settings.global"]
 }
