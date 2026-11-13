@@ -1,4 +1,4 @@
-﻿''' <summary>
+''' <summary>
 ''' PCL Harness 插件：AI 助手（API v6）。
 ''' 在「启动」页右侧挂一张对话卡片，直接和 OpenAI 兼容接口聊天：流式输出、代码块识别、
 ''' 用量/上下文可视化，并能读启动器的游戏实例、直接启动某个版本、给下一次启动追加参数。
@@ -173,7 +173,16 @@ Public Class AiChatPlugin
 
     Private Sub LoadSettings()
         BaseUrl = GetStr("apiBase", "https://api.deepseek.com")
-        ApiKey = GetStr("apiKey", "")
+        ApiKey = UnprotectSecret(GetStr("apiKey", ""))
+        ' 老版本把密钥明文写在 plugins.settings.json 里：读到明文就立刻改写成密文
+        Dim StoredKey As String = GetStr("apiKey", "")
+        If StoredKey.Length > 0 AndAlso Not StoredKey.StartsWith(SecretPrefix, StringComparison.Ordinal) Then
+            Try
+                Host.SetSetting("apiKey", ProtectSecret(ApiKey))
+                Host.LogInfo("检测到明文密钥，已改为 Windows 加密存储")
+            Catch ex As Exception
+            End Try
+        End If
         ModelName = GetStr("model", "deepseek-chat")
         CtxLimit = GetInt("contextLimit", 64000)
         ' 提示词是随版本升级的：老设置里的旧 prompt 会盖掉新默认值，所以按 promptVer 强制刷新
@@ -192,15 +201,75 @@ Public Class AiChatPlugin
     Private Sub SaveSettings()
         Try
             Host.SetSetting("apiBase", BaseUrl)
-            Host.SetSetting("apiKey", ApiKey)
+            Host.SetSetting("apiKey", ProtectSecret(ApiKey))
             Host.SetSetting("model", ModelName)
             Host.SetSetting("systemPrompt", SysPrompt)
             Host.SetSetting("contextLimit", CtxLimit)
             RebuildClient()
         Catch ex As Exception
-            If Host IsNot Nothing Then Host.LogWarn("保存设置失败：" & ex.Message)
+            If Host IsNot Nothing Then Host.LogWarn("保存设置失败：" & Redact(ex.Message))
         End Try
     End Sub
+
+    ' ==================== 密钥保护 ====================
+
+    ''' <summary>密文前缀。带这个前缀的值是用 Windows DPAPI 加密过的。</summary>
+    Private Const SecretPrefix As String = "dpapi:"
+
+    ''' <summary>用一个固定串做口令，避免密钥位数太短时被 DPAPI 的熵检查拦下。</summary>
+    Private Shared ReadOnly SecretEntropy As Byte() = Encoding.UTF8.GetBytes("PCLHarness.AiChat.v1")
+
+    ''' <summary>加密成 "dpapi:Base64"，只能被当前 Windows 用户在同一台机器上解回来。</summary>
+    Private Function ProtectSecret(Plain As String) As String
+        If String.IsNullOrEmpty(Plain) Then Return ""
+        If Plain.StartsWith(SecretPrefix, StringComparison.Ordinal) Then Return Plain
+        Try
+            Dim Raw As Byte() = Encoding.UTF8.GetBytes(Plain)
+            Dim Enc As Byte() = Security.Cryptography.ProtectedData.Protect(
+                Raw, SecretEntropy, Security.Cryptography.DataProtectionScope.CurrentUser)
+            Return SecretPrefix & Convert.ToBase64String(Enc)
+        Catch ex As Exception
+            If Host IsNot Nothing Then Host.LogWarn("密钥加密失败，本次仅在内存中保留：" & ex.Message)
+            Return ""
+        End Try
+    End Function
+
+    ''' <summary>解密；不是密文（老版本的明文）原样返回，解密失败返回空串并提示重填。</summary>
+    Private Function UnprotectSecret(Stored As String) As String
+        If String.IsNullOrEmpty(Stored) Then Return ""
+        If Not Stored.StartsWith(SecretPrefix, StringComparison.Ordinal) Then Return Stored
+        Try
+            Dim Enc As Byte() = Convert.FromBase64String(Stored.Substring(SecretPrefix.Length))
+            Dim Raw As Byte() = Security.Cryptography.ProtectedData.Unprotect(
+                Enc, SecretEntropy, Security.Cryptography.DataProtectionScope.CurrentUser)
+            Return Encoding.UTF8.GetString(Raw)
+        Catch ex As Exception
+            If Host IsNot Nothing Then
+                Host.LogWarn("密钥解密失败（换了 Windows 账户或换了机器？），请在「配置」里重新填写")
+            End If
+            Return ""
+        End Try
+    End Function
+
+    ''' <summary>密钥的展示形式：sk-1234…abcd；太短就全是星号。</summary>
+    Private Function MaskSecret(Value As String) As String
+        If String.IsNullOrEmpty(Value) Then Return "（未配置）"
+        If Value.Length <= 8 Then Return "********"
+        Return Value.Substring(0, 4) & "…" & Value.Substring(Value.Length - 4)
+    End Function
+
+    ''' <summary>把文本里出现的当前密钥换成掩码——写日志、写历史、报错给用户看之前都要过一遍。</summary>
+    Private Function Redact(Text As String) As String
+        If String.IsNullOrEmpty(Text) Then Return Text
+        If String.IsNullOrEmpty(ApiKey) OrElse ApiKey.Length < 6 Then Return Text
+        Dim Out As String = Text.Replace(ApiKey, MaskSecret(ApiKey))
+        ' 兜底：万一上游把整个 Authorization 头回显出来
+        Dim Bearer As String = "Bearer " & ApiKey
+        If Out.IndexOf(Bearer, StringComparison.OrdinalIgnoreCase) >= 0 Then
+            Out = Out.Replace(Bearer, "Bearer " & MaskSecret(ApiKey))
+        End If
+        Return Out
+    End Function
 
     ''' <summary>按当前端点重建 HttpClient：本地地址不走系统代理（避免代理把 127.0.0.1 劫走）。</summary>
     Private Sub RebuildClient()
@@ -299,7 +368,7 @@ Public Class AiChatPlugin
             For Each M In Messages
                 If String.IsNullOrWhiteSpace(M.Content) Then Continue For
                 Sb.Append(M.Role).Append(Convert.ToChar(9))
-                Sb.Append(EncodeBody(M.Content))
+                Sb.Append(EncodeBody(Redact(M.Content)))
                 Sb.Append(Environment.NewLine)
             Next
             File.WriteAllText(P, Sb.ToString(), New UTF8Encoding(False))
@@ -327,13 +396,6 @@ Public Class AiChatPlugin
                                "或本地 Ollama 的 http://127.0.0.1:11434/v1（本地不需要密钥）。",
                 .SettingType = PCL.PluginSettingType.Text,
                 .DefaultValue = "https://api.deepseek.com"
-            },
-            New PCL.PluginSetting With {
-                .Key = "apiKey",
-                .Title = "API Key",
-                .Description = "留空则只能连本机（127.0.0.1 / localhost）的接口。",
-                .SettingType = PCL.PluginSettingType.Text,
-                .DefaultValue = ""
             },
             New PCL.PluginSetting With {
                 .Key = "model",
@@ -984,8 +1046,8 @@ Public Class AiChatPlugin
                      Catch ex As OperationCanceledException
                          AppendPiece(Target, Environment.NewLine & "（已停止）")
                      Catch ex As Exception
-                         If Host IsNot Nothing Then Host.LogWarn("AI 助手请求失败：" & ex.Message & " | " & ex.ToString())
-                         AppendPiece(Target, "⚠ " & ex.Message)
+                         If Host IsNot Nothing Then Host.LogWarn("AI 助手请求失败：" & Redact(ex.Message) & " | " & Redact(ex.ToString()))
+                         AppendPiece(Target, "⚠ " & Redact(ex.Message))
                      Finally
                          FlushUi()
                          Busy = False
@@ -1021,7 +1083,7 @@ Public Class AiChatPlugin
         Catch ex As OperationCanceledException
             Throw
         Catch ex As Exception
-            Throw New Exception(ConnectErrorText(ex))
+            Throw New Exception(Redact(ConnectErrorText(ex)))
         End Try
         If Not Resp.IsSuccessStatusCode Then
             Dim ErrBody As String = ""
@@ -1623,7 +1685,7 @@ Public Class AiChatPlugin
             Next
             Return Sb.ToString()
         Catch ex As Exception
-            Return "读插件列表失败：" & ex.Message
+            Return "读插件列表失败：" & Redact(ex.Message)
         End Try
     End Function
 
